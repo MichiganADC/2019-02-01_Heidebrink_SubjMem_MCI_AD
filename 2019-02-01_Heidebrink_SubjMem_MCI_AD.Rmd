@@ -2,7 +2,12 @@
 title: "2019-02-01_Heidebrink_SubjMem_MCI_AD"
 author: "Nicolas May"
 date: "2/6/2019"
-output: html_document
+output: 
+  html_document:
+    theme: cerulean
+    highlight: espresso
+    toc: true
+    toc_float: true
 ---
 
 ```{r setup, include=FALSE}
@@ -11,8 +16,188 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Load Requirements
 
+## Load useful libraries
+
+```{r}
+library(dplyr)
+```
+
+## Load Useful Variables / Helpers
+
+```{r}
+source("~/Desktop/config.R")
+source("~/Desktop/helpers.R")
+
+# swith to access API (TRUE) or not (FALSE)
+get_api_data <- TRUE
+```
+
 # Get Data
+
+## Define UDS 3 data fields
+
+```{r}
+fields_u3_raw <- 
+  c(
+    "ptid"
+    , "form_date"
+    # ivp_b9
+    , "decsub" # Does the subject report a decline in memory?
+    # , "decin"  # Does the co-participant report a decline in subj's memory?
+    # , "decclcog" # Clinix. judgment, is subj experiencing cognitive impair?
+    # fvp_b9
+    , "fu_decsub"
+    # , "fu_decin"
+    # , "fu_decclcog"
+    # tvp_b9
+    , "tele_decsub"
+    # , "tele_decin"
+    # , "tele_decclcog"
+    # ivp_d1 
+    , "normcog"  # normal cognition
+    , "mciamem"  # aMCI SD
+    , "mciaplus" # aMCI MD
+    , "mcinon1"  # naMCI SD
+    , "mcinon2"  # naMCI MD
+    , "alzdis"   # Alz etiology
+    , "alzdisif" # Alz etiology primary
+    # fvp_d1 
+    , "fu_normcog"
+    , "fu_mciamem"
+    , "fu_mciaplus"
+    , "fu_mcinon1"
+    , "fu_mcinon2"
+    , "fu_alzdis"
+    , "fu_alzdisif"
+    # tvp_d1 
+    , "tele_normcog"
+    , "tele_mciamem"
+    , "tele_mciaplus"
+    , "tele_mcinon1"
+    , "tele_mcinon2"
+    , "tele_alzdis"
+    , "tele_alzdisif"
+  )
+
+fields_u3 <- fields_u3_raw %>% paste(collapse = ",")
+```
+
+## Retrieve data via REDCap API
+
+```{r}
+if (get_api_data) {
+  json_u3 <- rc_api_get(token = REDCAP_API_TOKEN_UDS3n,
+                        fields = fields_u3)
+}
+
+df_u3 <- jsonlite::fromJSON(json_u3) %>% na_if("")
+```
+
+## Write raw data to CSV
+
+```{r}
+data.table::fwrite(df_u3, "df_u3.csv", na = "")
+```
+
 
 # Process Data
 
+## Clean data
+
+Filter out DDE entries.
+
+```{r}
+df_u3_cln <- df_u3 %>% 
+  filter(str_detect(ptid, "^UM\\d{8}$"))
+```
+
+Filter out records with missing `form_date`s.
+
+```{r}
+df_u3_cln <- df_u3_cln %>% 
+  filter(!is.na(form_date))
+```
+
+Collapse initial visit / follow-up visit / telephone visit fields.
+
+```{r}
+df_u3_cln <- collapse_ift_cols(df_u3_cln)
+```
+
+## Mutate data
+
+Add `mci` yes/no, `alz_prim_etio` yes/no, `alz_scnd_etio` yes/no fields.
+
+```{r}
+df_u3_cln_mut <- df_u3_cln %>% 
+  mutate(mci = case_when(
+    normcog == 0L & 
+      (mciamem == 1L | mciaplus == 1L | mcinon1 == 1L | mcinon2 == 1L) ~ 1L,
+    TRUE ~ NA_integer_
+  )) %>% 
+  mutate(alz_prim_etio = case_when(
+    alzdis == 1L & alzdisif == 1L ~ 1L,
+    TRUE ~ NA_integer_
+  )) %>% 
+  mutate(alz_scnd_etio = case_when(
+    alzdis == 1L & alzdisif == 2L ~ 1L,
+    TRUE ~ NA_integer_
+  ))
+```
+
+## Filter data
+
+Get only most recent visits.
+
+```{r}
+df_u3_cln_mut_flt <- df_u3_cln_mut %>% 
+  get_visit_n(id_field = ptid, date_field = form_date, n = Inf)
+```
+
+Get only those of interest:
+1. MCI dx
+2. AD etiology
+3. Report memory decline
+
+```{r}
+df_u3_cln_mut_flt <- df_u3_cln_mut_flt %>% 
+  filter(mci == 1L & 
+           (alz_prim_etio == 1L | alz_scnd_etio == 1L) &
+           decsub == 1L)
+```
+
+
 # Write to CSV
+
+```{r}
+data.table::fwrite(df_u3_cln_mut_flt, "df_u3_cln_mut_flt.csv", na = "")
+```
+
+
+```{r echo=FALSE}
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+#  @##==---==##@##==---==##@    EXTRA  :  SPACE    @##==---==##@##==---==##@  #
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+#  @##==---==##@##==---==##@    EXTRA  :  SPACE    @##==---==##@##==---==##@  #
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+```
